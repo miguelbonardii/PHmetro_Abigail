@@ -66,7 +66,10 @@ STRUCT DA CALIBRAÇÃO
     tampão escolhido, as últimas leituras e os cronômetros.
 
 LEITURAS
-    lerTensao() faz a média de 20 leituras e converte para volts. Antes da
+    lerTensao() faz a média de 20 leituras e converte para volts. As 20
+    leituras ficam espalhadas por cerca de 17 ms, que é o tempo de uma onda
+    da rede elétrica (60 Hz). Assim o ruído da tomada sobe e desce dentro da
+    média e se cancela, e a leitura oscila menos. Antes da
     média, descarta uma leitura, porque a primeira depois de trocar de pino
     pode vir influenciada pelo pino anterior. calcularPH() aplica a reta.
     guardarNoHistorico() anota cada tensão numa lista com as 10 últimas, e
@@ -241,7 +244,9 @@ para descarte. Os valores dos tampões valem para cerca de 25 graus Celsius.
  6. Use UP/DOWN até a tela mostrar "CAL tampao 6.86".
  7. Mexa de leve e espere o LED amarelo ficar aceso fixo, o que indica que a
     leitura estabilizou. Pode levar 1 ou 2 minutos. Se o amarelo nunca firmar,
-    confira a tensão na linha de baixo: ela deve estar mudando muito pouco.
+    confira o pH na linha de baixo: ele deve estar mudando muito pouco. Esse
+    pH usa a calibração anterior, então antes de calibrar ele pode estar longe
+    do valor do tampão. A tensão em mV continua no modo mV, fora da calibração.
  8. Aperte SELECT. Aparece "Ponto gravado!", e a tela passa a mostrar um
     asterisco ao lado do tampão e "pts:1".
  9. Lave a sonda com água destilada novamente. Isso evita que um tampão

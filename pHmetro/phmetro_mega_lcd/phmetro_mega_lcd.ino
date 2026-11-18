@@ -72,6 +72,12 @@ const float TAMPOES[3] = {4.01, 6.86, 9.18};
 // Quantas leituras entram em cada média.
 const uint8_t NUM_AMOSTRAS = 20;
 
+// Pausa entre as amostras, em microssegundos. A rede elétrica (60 Hz) faz uma
+// onda a cada 16.667 us; 20 amostras a cada ~833 us cobrem uma onda inteira,
+// e o ruído da rede se cancela na média. Cada analogRead já leva ~112 us,
+// então a pausa é 833 - 112 = cerca de 720 us. A leitura toda leva ~17 ms.
+const unsigned int PAUSA_AMOSTRAS_US = 720;
+
 // Tempos, em milissegundos (1000 ms = 1 segundo).
 const unsigned long INTERVALO_LEITURA = 500;   // mede 2 vezes por segundo
 const unsigned long INTERVALO_PISCA   = 250;   // velocidade do pisca vermelho
@@ -180,6 +186,8 @@ float lerTensao(uint8_t pino) {
   long soma = 0;
   for (uint8_t i = 0; i < NUM_AMOSTRAS; i++) {
     soma += analogRead(pino);
+    // Pausa curta e de propósito (não trava o resto: são só ~17 ms a cada 500 ms).
+    delayMicroseconds(PAUSA_AMOSTRAS_US);
   }
 
   // analogRead devolve de 0 a 1023, que representa de 0 a 5 V.
@@ -513,8 +521,10 @@ void desenharTela() {
       lcd.print(F(" "));
     }
     lcd.setCursor(0, 1);
-    lcd.print(tensaoPH, 3);
-    lcd.print(F("V pts:"));
+    // pH pela calibração atual: só fica certo depois dos pontos gravados.
+    lcd.print(F("pH "));
+    lcd.print(ph, 2);
+    lcd.print(F(" pts:"));
     lcd.print(pontosGravados());
     lcd.print(F("   "));
   }

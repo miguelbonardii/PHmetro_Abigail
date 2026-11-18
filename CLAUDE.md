@@ -42,7 +42,7 @@ Se mudar o código, os pinos ou o funcionamento, atualize também `EXPLICACAO.tx
 - Com 1 ponto, ajusta só o intercepto. Com 2 ou 3, calcula a reta por mínimos quadrados e recusa inclinações fora de -2 a -20 pH/V.
 - Ao sair da calibração (LEFT) com 2 ou 3 pontos, o LCD mostra por 3 s a **saúde da sonda**: sensibilidade em mV/pH e, com 3 tampões, a linearidade (R² em %). Com 2 pontos, aparece "Linear: use 3".
 - A calibração fica na EEPROM, com um número de assinatura para detectar a primeira execução.
-- Lê a cada 500 ms, com média de 20 leituras. Usa `millis()` em vez de `delay()` no programa principal, para não travar o programa (e explique por quê). Botões com detecção de clique e debounce simples.
+- Lê a cada 500 ms, com média de 20 leituras espalhadas por ~17 ms (uma onda da rede de 60 Hz), para cancelar o ruído da tomada. Usa `millis()` em vez de `delay()` no programa principal, para não travar o programa (e explique por quê). Botões com detecção de clique e debounce simples.
 
 ## Ferramentas
 - Use o **arduino-cli** para compilar, gravar e abrir o monitor serial. A placa é `arduino:avr:mega`.
