@@ -1,0 +1,377 @@
+EXPLICAÇÃO DO pHMETRO DE BANCADA COM ARDUINO
+============================================
+
+
+PARTE 1 - OS ARQUIVOS E A ORDEM DE CARREGAR
+-------------------------------------------
+
+A IDE do Arduino exige que cada arquivo .ino fique numa pasta com o mesmo
+nome. Por isso cada programa tem a sua própria pasta.
+
+teste_leds/teste_leds.ino
+    Acende os 4 LEDs um por vez e depois pisca em pares. O LCD mostra qual
+    LED deveria acender.
+
+teste_botoes/teste_botoes.ino
+    Mostra no LCD o valor lido no A0 e o nome do botão apertado.
+
+phmetro_mega_lcd/phmetro_mega_lcd.ino
+    O programa de verdade, o pHmetro.
+
+LIGACOES.txt
+    Tabela de onde vai cada fio.
+
+EXPLICACAO.txt
+    Este texto.
+
+Ordem de carregar no Arduino (o Mega guarda só um programa por vez, e cada
+carregamento substitui o anterior):
+
+    1. teste_leds: confirma se os LEDs estão bem ligados.
+    2. teste_botoes: confirma se os botões são reconhecidos.
+    3. phmetro_mega_lcd: o programa final.
+
+Assim, se algo falhar no programa final, vocês já sabem que os LEDs e os botões
+funcionam. Carregar os testes não apaga a calibração, porque eles não mexem na
+EEPROM.
+
+Na IDE, escolha a placa "Arduino Mega or Mega 2560" e a porta certa.
+
+
+PARTE 2 - O CÓDIGO PRINCIPAL, NA ORDEM EM QUE APARECE
+-----------------------------------------------------
+
+BIBLIOTECAS
+    Código pronto que já vem com a IDE. LiquidCrystal sabe controlar o LCD.
+    EEPROM sabe ler e gravar na memória permanente.
+
+PINOS
+    Dá nomes aos pinos. Escrever LED_ALERTA é mais claro do que escrever 26, e,
+    se um fio mudar de lugar, basta trocar o número num lugar só. O pino 10 não
+    aparece de propósito: ele controla a luz de fundo e, em alguns shields,
+    usá-lo pode danificar o Arduino. O pino To do módulo (temperatura da
+    placa) também não é lido: o projeto não mede temperatura.
+
+CONFIGURAÇÕES
+    Os números que vocês podem querer mudar: a faixa de pH (6,0 a 8,0), os
+    valores dos tampões, o número de leituras da média (20) e os tempos.
+
+STRUCT DA CALIBRAÇÃO
+    A conversão de tensão para pH é a reta pH = inclinacao x V + intercepto. A
+    struct guarda essa reta, as tensões medidas em cada tampão, quais tampões
+    já foram gravados e a assinatura. Os valores padrão (-5,56 e 20,9) vêm do
+    comportamento típico do módulo: pH 7 perto de 2,5 V e 0,18 V por ponto de
+    pH. A inclinação é negativa porque, neste módulo, a tensão cai quando o pH
+    sobe. Depois vêm as variáveis de estado, que guardam o modo atual, o
+    tampão escolhido, as últimas leituras e os cronômetros.
+
+LEITURAS
+    lerTensao() faz a média de 20 leituras e converte para volts. Antes da
+    média, descarta uma leitura, porque a primeira depois de trocar de pino
+    pode vir influenciada pelo pino anterior. calcularPH() aplica a reta.
+    guardarNoHistorico() anota cada tensão numa lista com as 10 últimas, e
+    verificarEstabilidade() diz se a leitura parou de variar (veja
+    "ESTABILIDADE" na Parte 3).
+
+BOTÕES
+    lerBotao() transforma o valor do A0 no nome do botão. botaoClicado() só
+    avisa uma vez, no momento em que o botão é apertado, mesmo que ele continue
+    segurado. Essa função também faz o debounce: o contato metálico "treme" ao
+    ser apertado, então só vale uma leitura que ficou igual por 30 ms.
+
+CALIBRAÇÃO
+    calibracaoPadrao() volta aos valores iniciais. pontosGravados() conta os
+    tampões gravados. recalcularReta() faz as contas: com 1 ponto, ajusta só o
+    intercepto; com 2 ou 3, usa mínimos quadrados. gravarPonto() mede a sonda
+    naquele instante, recalcula a reta e guarda tudo na EEPROM.
+    calcularLinearidade() calcula o R² dos 3 tampões (veja "SAÚDE DA SONDA" na
+    Parte 3), e mostrarSaudeSonda() mostra o resultado por 3 segundos ao sair
+    da calibração com LEFT, quando há 2 ou 3 pontos gravados.
+
+    Existe uma proteção: com 2 ou 3 pontos, se a inclinação calculada for
+    positiva ou absurda (fora de -2 a -20), o ponto é recusado e a tela mostra
+    "Ponto recusado". Isso costuma significar tampão errado, sonda fora da
+    solução ou fio solto. A calibração anterior continua valendo.
+
+LEDS
+    sequenciaInicial() acende os LEDs em ordem ao ligar. atualizarLeds() decide
+    o estado de cada um usando millis(). O LED amarelo pisca a cada leitura
+    enquanto o valor ainda varia e fica aceso fixo quando a leitura está
+    estável. O LED vermelho não pisca durante a
+    calibração, porque os tampões 4,01 e 9,18 estão fora da faixa de propósito
+    e o alerta não significaria nada.
+
+TELA
+    desenharTela() escreve as informações do modo atual. São dois modos de
+    leitura: pH (com o aviso de faixa normal, ácido ou básico) e mV (o sinal
+    da sonda em milivolts), além da tela da calibração. Os textos não têm
+    acento porque o LCD não tem essas letras. mostrarAviso() coloca uma mensagem
+    na tela por 1 segundo sem travar o programa. Durante a mensagem, os cliques
+    são ignorados, para ninguém gravar um tampão sem estar vendo qual é.
+
+AÇÕES DOS BOTÕES
+    tratarBotao() decide o que cada clique faz. O mesmo botão pode ter funções
+    diferentes: fora da calibração, UP ou DOWN alterna entre os modos pH e mV;
+    dentro dela, UP e DOWN trocam o tampão.
+
+SETUP
+    Roda uma vez, ao ligar. Configura os pinos, inicia o LCD, faz a sequência
+    dos LEDs e busca a calibração na EEPROM. Se a assinatura não bater, é a
+    primeira execução, então grava os valores padrão.
+
+LOOP
+    Roda para sempre, em quatro passos: confere os botões, retira a mensagem
+    se o tempo dela acabou, faz a leitura se já passaram 500 ms e atualiza os
+    LEDs.
+
+
+PARTE 3 - CONCEITOS USADOS
+--------------------------
+
+ANALOGREAD E CONVERSÃO PARA VOLTS
+    O Arduino não mede volts diretamente. O analogRead devolve um número de 0 a
+    1023, em que 0 equivale a 0 V e 1023 equivale a 5 V. Para converter:
+    volts = leitura x 5,0 / 1023. Exemplo: leitura 512 dá cerca de 2,50 V.
+
+MÉDIA DE LEITURAS
+    Toda medida elétrica tem "ruído", pequenas variações ao acaso. Algumas
+    leituras saem um pouco acima e outras um pouco abaixo. Na média, esses erros
+    se cancelam em boa parte e o valor na tela fica mais firme.
+
+MILLIS VS DELAY
+    delay(1000) para tudo por 1 segundo: o Arduino não lê botão nem sonda nesse
+    tempo. millis() é um cronômetro que conta os milissegundos desde que a placa
+    ligou. O programa anota um horário e, a cada volta, pergunta "já passou o
+    tempo?". Se não passou, segue fazendo o resto. É como olhar o relógio de vez
+    em quando em vez de ficar parado olhando para ele. O delay() só aparece no
+    setup() e nos programas de teste, onde não atrapalha nada.
+
+SAÚDE DA SONDA: SENSIBILIDADE E LINEARIDADE
+    Ao sair da calibração com 2 ou 3 tampões gravados, a tela mostra por 3
+    segundos dois números:
+
+    Sens (sensibilidade, em mV/pH): quantos milivolts o sinal muda quando o pH
+    muda 1 ponto. A ponta de vidro gera cerca de 59 mV por ponto de pH a 25
+    graus (equação de Nernst), e o módulo PH-4502C amplifica esse sinal, então
+    no Arduino o valor típico fica perto de 180 mV/pH. Anotem o valor da
+    primeira calibração: se ele cair bastante com o tempo, a sonda está
+    envelhecendo ou suja.
+        Exemplo: 3000 mV no tampão 4,01 e 2100 mV no 9,18.
+        (3000 - 2100) / (9,18 - 4,01) = 900 / 5,17 = cerca de 174 mV/pH.
+
+    Linear (linearidade, o R² em %): o quanto os 3 pontos ficam em cima de uma
+    reta. Acima de 99% é ótimo. Bem abaixo disso, algum ponto saiu errado
+    (tampão contaminado, sonda não estabilizada, tampão errado na tela).
+    Com só 2 tampões aparece "Linear: use 3", porque por 2 pontos sempre
+    passa uma reta perfeita e o R² não diria nada.
+
+    O R² é o mesmo número que o Excel mostra na linha de tendência de um gráfico
+    de dispersão (pH do tampão x mV), então dá para conferir um com o outro.
+
+ESTABILIDADE DA LEITURA
+    Ao entrar numa solução nova, a sonda demora um pouco para chegar ao valor
+    final, e a leitura vai mudando aos poucos. O programa guarda as 10 últimas
+    tensões (5 segundos) e compara a maior com a menor. Se a diferença for de
+    até 10 mV (cerca de 0,05 de pH), a leitura é considerada estável e o LED
+    amarelo fica aceso fixo. A comparação usa a tensão, e não o pH, para valer
+    igual antes e durante a calibração. Os dois números ficam nas constantes
+    LEITURAS_ESTABILIDADE e VARIACAO_ESTAVEL e podem ser ajustados.
+
+    Cuidado: estável não quer dizer certo. Uma sonda solta ou fora da solução
+    pode dar uma leitura parada num valor errado.
+
+ENUM
+    Dá nomes para números. O código fica com MODO_PH e MODO_MV em vez de 0 e 1,
+    bem mais fácil de ler.
+
+STRUCT
+    Junta várias variáveis num pacote com um nome só. Aqui permite gravar a
+    calibração inteira de uma vez na EEPROM.
+
+EEPROM
+    Memória que não apaga ao desligar. Por isso não é preciso calibrar sempre
+    que liga a placa. Ela aguenta cerca de 100 mil gravações em cada posição;
+    como só gravamos ao calibrar, isso não é problema. O número de assinatura
+    (0xA5C3) resolve a primeira execução: numa EEPROM que nunca foi usada por
+    este programa, esse número não estará lá, então o programa sabe que precisa
+    usar os valores padrão.
+
+DIVISOR DE TENSÃO DOS BOTÕES
+    Dois resistores em série dividem a tensão: o ponto do meio fica com uma
+    fração dos 5 V, conforme os valores deles. Cada botão do shield forma um
+    divisor diferente, então cada um produz uma tensão diferente no A0. É assim
+    que 5 botões usam um pino só. Uma limitação: dois botões apertados ao mesmo
+    tempo não são reconhecidos corretamente.
+
+MÍNIMOS QUADRADOS
+    Com 3 pontos medidos, nem sempre existe uma reta que passe exatamente por
+    todos, porque toda medida tem um pequeno erro. O método escolhe a reta que
+    fica mais perto de todos eles. "Quadrados" é porque ele torna mínima a soma
+    das distâncias de cada ponto até a reta, elevadas ao quadrado.
+
+    Com x = tensão, y = pH do tampão e n = número de pontos:
+        inclinacao = (n x soma(x.y) - soma(x) x soma(y)) / (n x soma(x.x) - soma(x)^2)
+        intercepto = (soma(y) - inclinacao x soma(x)) / n
+
+    Exemplo com 2 pontos: 3,01 V no tampão 4,01 e 2,50 V no tampão 6,86.
+        inclinacao = (6,86 - 4,01) / (2,50 - 3,01) = cerca de -5,59
+        intercepto = 6,86 + 5,59 x 2,50 = cerca de 20,83
+    Com 2 pontos, a reta passa exatamente pelos dois.
+
+
+PARTE 4 - PASSO A PASSO DA CALIBRAÇÃO
+-------------------------------------
+
+Por que calibrar? Cada sonda é um pouco diferente e muda com o uso. A sonda
+produz uma tensão que depende da acidez da solução, e os tampões são soluções
+com pH conhecido e estável. Medindo a tensão em cada tampão, o Arduino descobre
+qual tensão corresponde a qual pH na SUA sonda.
+
+Materiais: tampões 4,01, 6,86 e 9,18; água destilada; papel macio; um béquer
+para descarte. Os valores dos tampões valem para cerca de 25 graus Celsius.
+
+ 1. Ligue o sistema e espere alguns minutos para o módulo estabilizar.
+ 2. Se quiser recomeçar do zero (recomendado se a sonda não é calibrada há muito
+    tempo): aperte SELECT e depois RIGHT, para apagar os pontos antigos.
+ 3. Se ainda não entrou, aperte SELECT para entrar na calibração. O LED
+    transparente acende.
+ 4. Lave a sonda com água destilada e encoste o papel de leve para tirar o
+    excesso de água. Não esfregue: o bulbo de vidro é frágil.
+ 5. Mergulhe a sonda no tampão 6,86, sem bater no fundo.
+ 6. Use UP/DOWN até a tela mostrar "CAL tampao 6.86".
+ 7. Mexa de leve e espere o LED amarelo ficar aceso fixo, o que indica que a
+    leitura estabilizou. Pode levar 1 ou 2 minutos. Se o amarelo nunca firmar,
+    confira a tensão na linha de baixo: ela deve estar mudando muito pouco.
+ 8. Aperte SELECT. Aparece "Ponto gravado!", e a tela passa a mostrar um
+    asterisco ao lado do tampão e "pts:1".
+ 9. Lave a sonda com água destilada novamente. Isso evita que um tampão
+    contamine o outro.
+10. Repita os passos 5 a 9 com o tampão 4,01.
+11. Repita os passos 5 a 9 com o tampão 9,18. A tela deve mostrar "pts:3".
+12. Aperte LEFT para sair. Por 3 segundos aparece a saúde da sonda: anotem a
+    sensibilidade (Sens) e a linearidade (Linear). Depois, lave a sonda e
+    confira: num tampão, o pH mostrado deve ficar próximo do valor escrito na
+    embalagem.
+13. Ao terminar, lave a sonda e guarde-a com a ponta na solução de KCl 3 mol/L,
+    dentro da tampinha. Ela não deve secar nem ser guardada em água destilada,
+    porque isso prejudica o bulbo.
+
+Se errar um ponto, basta escolher o mesmo tampão e apertar SELECT de novo: o
+valor novo substitui o antigo. Com só 1 ponto gravado, apenas o intercepto é
+ajustado; prefira 2 ou 3 pontos, que dão um resultado melhor. Não devolva ao
+frasco o tampão já usado, e não use a mesma porção por muito tempo, pois ela
+se contamina.
+
+
+PARTE 5 - PROBLEMAS COMUNS E SOLUÇÕES
+-------------------------------------
+
+Tela acesa, mas sem letras (ou só quadradinhos)
+    O contraste está desajustado. Gire com uma chave de fenda pequena o trimpot
+    (o parafuso do componente azul) do shield, até as letras aparecerem.
+
+Botões trocados ou que não respondem
+    Os valores variam de um shield para outro. Rode o teste_botoes, anote o
+    valor de cada botão e ajuste os limites na função lerBotao() do código
+    principal.
+
+LED apagado
+    Confira a polaridade (perna longa do lado do pino, perna curta no GND) e se
+    o trilho de GND da protoboard está ligado a um GND do Mega. Rode o
+    teste_leds para ver qual LED falha. Lembre-se de que alguns trilhos de
+    protoboard são divididos ao meio.
+
+"Ponto recusado" na calibração
+    A reta calculada não faz sentido. Confira se o tampão escolhido na tela é o
+    mesmo em que a sonda está, se ela está mesmo dentro da solução e se os fios
+    Po e G estão firmes. Se houver pontos antigos, apague-os com RIGHT e recomece.
+
+pH muito errado ou parado num valor
+    Veja o modo mV. Se o valor não muda ao trocar de solução, confira o fio Po e
+    a rosca do conector BNC. Se a sonda nunca foi calibrada, faça a calibração.
+    Se continuar errado, siga os testes da Parte 6, um de cada vez.
+
+Leitura que varia muito
+    Espere a sonda estabilizar, evite encostar nela e no fio durante a medida e
+    deixe o módulo longe de fontes e motores. Sonda velha ou seca também responde
+    mal e lentamente.
+
+LED vermelho piscando sem motivo
+    Com a sonda no ar ou sem calibrar, o pH pode sair da faixa. Isso é esperado.
+    Confira a medida numa solução conhecida.
+
+Erro ao carregar o programa
+    Confira se a placa escolhida é "Arduino Mega or Mega 2560" e se a porta
+    está certa. Feche o Monitor Serial, se estiver aberto, e tente de novo.
+
+
+PARTE 6 - DIAGNÓSTICO DO MÓDULO E DA SONDA
+------------------------------------------
+
+Quando o pH não faz sentido, o problema pode estar em três lugares: no módulo
+PH-4502C (a plaquinha), na sonda ou na calibração. Os testes abaixo separam um
+do outro. Façam na ordem e usem sempre o MODO mV, porque ele mostra a tensão
+pura, sem passar pela calibração. O modo pH depende da calibração e pode
+enganar durante esses testes.
+
+TESTE 1 - O MÓDULO, SEM A SONDA (CURTO NO BNC)
+    1. Desligue o USB e desrosqueie a sonda do conector BNC do módulo.
+    2. Com um pedacinho de fio, ligue o pino do meio do BNC à parte de metal
+       de fora. Isso simula uma sonda perfeita em pH 7, que dá 0 mV.
+    3. Ligue o USB e veja o modo mV.
+
+    O esperado é perto de 2500 mV, que é o meio da faixa de 0 a 5 V. Assim
+    sobra espaço para a tensão subir (ácidos) e descer (bases).
+
+    Se estiver longe de 2500, gire devagar um dos trimpots azuis do módulo,
+    olhando a tela. Se o mV mudar, é o trimpot certo: ajuste até perto de
+    2500. Se nada mudar, é o trimpot do pino Do, que não usamos: volte-o para
+    onde estava e tente o outro. Depois de mexer no trimpot, a calibração antiga
+    fica errada: apague-a com SELECT e depois RIGHT.
+
+    Sem a sonda e sem o fio, a leitura fica "solta" e sem sentido. Isso é
+    normal, porque a entrada do módulo fica aberta.
+
+TESTE 2 - A SONDA, COM MULTÍMETRO
+    1. Desrosqueie a sonda do módulo.
+    2. Coloque o multímetro em resistência, na escala mais alta.
+    3. Encoste uma ponta no pino do meio do BNC da sonda e a outra na parte de
+       metal de fora.
+
+    O esperado é "OL" (ou "1"), ou seja, sem leitura. O vidro do bulbo de uma
+    sonda boa tem uma resistência enorme, maior do que o multímetro mede. Se
+    aparecer um valor baixo, há um curto dentro da sonda ou do cabo. Uma sonda
+    em curto não tem conserto e precisa ser trocada.
+
+TESTE 3 - A SONDA NOS TAMPÕES
+    Coloque a sonda em cada tampão, lavando com água destilada entre um e outro.
+    Espere 1 a 2 minutos em cada um e anote o mV. Com o Teste 1 ajustado em
+    2500 mV, o esperado é aproximadamente:
+        tampão 4,01: perto de 3000 mV
+        tampão 6,86: perto de 2500 mV
+        tampão 9,18: perto de 2100 mV
+    O importante é a tensão cair bastante do 4,01 para o 9,18: várias centenas
+    de mV. Se os três tampões derem quase o mesmo valor, a sonda não está
+    respondendo: está seca (hidrate em KCl 3 mol/L de um dia para o outro) ou
+    com defeito (veja o Teste 2).
+
+    Teste extra no ar: tire a sonda do líquido e veja o mV. Uma sonda boa deixa
+    a leitura solta. Se ela ficar parada perto do valor do Teste 1, a sonda está
+    se comportando como um fio em curto.
+
+EXEMPLO REAL DESTE PROJETO
+    No primeiro teste, a calibração não funcionava. O diagnóstico foi assim:
+    - Teste 1: o curto deu 3735 mV, longe de 2500. O trimpot foi ajustado e o
+      curto passou a dar 2557 mV. O módulo estava bom, só desajustado.
+    - Teste 3: os tampões deram 2648 mV (4,01), 2655 mV (6,86) e 2650 mV
+      (9,18), praticamente iguais. No ar deu 2680 mV, quase o valor do curto.
+    - Teste 2: o multímetro mostrou curto na sonda.
+    Conclusão: a sonda estava com defeito, e o módulo, os fios e o código
+    estavam certos. A solução foi trocar a sonda.
+
+COM UMA SONDA NOVA
+    1. Faça o Teste 2: precisa dar "OL".
+    2. Hidrate a ponta em KCl 3 mol/L por algumas horas.
+    3. Apague a calibração antiga (SELECT e depois RIGHT).
+    4. Faça o Teste 3 e confira se os valores se espalham.
+    5. Calibre com os três tampões, seguindo a Parte 4.

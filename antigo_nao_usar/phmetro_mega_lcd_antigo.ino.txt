@@ -1,0 +1,384 @@
+// =====================================================================
+//  pHMETRO DE BANCADA  -  ARDUINO MEGA + LCD KEYPAD SHIELD
+// =====================================================================
+//  O QUE ESTE CÓDIGO FAZ:
+//  - Lê a sonda de pH (pino A8) e a temperatura do módulo (pino A9).
+//  - Mostra tudo no LCD 16x2, em 3 modos de leitura: pH, mV e Temp.
+//  - Tem um modo de CALIBRAÇÃO com os tampões 4,01 / 6,86 / 9,18.
+//  - Guarda a calibração na memória EEPROM, que NÃO apaga ao desligar.
+//  - Controla os 4 LEDs (azul, amarelo, vermelho e transparente).
+//
+//  BOTÕES DO SHIELD:
+//    UP / DOWN -> troca o modo (pH -> mV -> Temp)
+//    SELECT    -> entra na calibração
+//    Na calibração:
+//      UP / DOWN -> escolhe o tampão (4,01 / 6,86 / 9,18)
+//      SELECT    -> grava o ponto do tampão escolhido
+//      LEFT      -> sai da calibração
+//      RIGHT     -> apaga a calibração (volta ao padrão de fábrica)
+//
+//  LIGAÇÕES:
+//    LCD Keypad Shield -> encaixado no Mega (usa 4 a 10 e A0)
+//    Módulo PH-4502C:  Po -> A8 | To -> A9 | V+ -> 5V | G -> GND
+//    LEDs (com resistor de 220 ohm): 22 azul, 23 amarelo,
+//                                    26 vermelho, 27 transparente
+//
+//  NÃO PRECISA INSTALAR BIBLIOTECA: LiquidCrystal e EEPROM já vêm
+//  junto com a IDE do Arduino.
+// =====================================================================
+
+#include <LiquidCrystal.h>  // controla o LCD 16x2
+#include <EEPROM.h>         // memória que guarda dados mesmo sem energia
+
+
+// ======================= PINOS =======================
+
+// Pinos que o shield usa para a tela (já ligados por baixo dele).
+// Ordem: RS, Enable, D4, D5, D6, D7
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+const uint8_t PIN_BOTOES = A0;  // os 5 botões do shield ficam todos no A0
+const uint8_t PIN_PH     = A8;  // sinal da sonda (pino Po do módulo)
+const uint8_t PIN_TEMP   = A9;  // sinal de temperatura (pino To do módulo)
+
+const uint8_t LED_LIGADO  = 22;  // Azul
+const uint8_t LED_LEITURA = 23;  // Amarelo
+const uint8_t LED_ALERTA  = 26;  // Vermelho
+const uint8_t LED_CALIB   = 27;  // Transparente
+
+// ATENÇÃO: o pino 10 controla a luz de fundo do LCD.
+// Este código NÃO mexe nele de propósito: em alguns shields,
+// colocar o pino 10 em HIGH pode danificar o Arduino.
+
+
+// ======================= CONFIGURAÇÕES =======================
+
+// Faixa de pH considerada normal. Fora dela, o LED vermelho pisca.
+const float PH_MIN = 6.0;
+const float PH_MAX = 8.0;
+
+// Valores dos tampões que vocês têm (escritos nas embalagens).
+const float TAMPOES[3] = {4.01, 6.86, 9.18};
+
+// Tempos, em milissegundos (1000 ms = 1 segundo)
+const unsigned long INTERVALO_LEITURA = 500;  // mede 2 vezes por segundo
+const unsigned long INTERVALO_PISCA   = 250;  // velocidade do pisca vermelho
+const unsigned long PULSO_LEITURA     = 80;   // tempo aceso do amarelo
+
+
+// ======================= CALIBRAÇÃO =======================
+// A conversão de tensão (V) para pH é uma reta:
+//     pH = inclinacao * V + intercepto
+// No módulo PH-4502C, quanto MAIOR o pH, MENOR a tensão. Por isso a
+// inclinação padrão é negativa. Os valores padrão são aproximados:
+// pH 7 perto de 2,5 V, mudando cerca de 0,18 V por ponto de pH.
+// Depois de calibrar, o Arduino calcula a reta certa para a SUA sonda.
+
+const float INCLINACAO_PADRAO = -5.56;  // pontos de pH por volt
+const float INTERCEPTO_PADRAO = 20.9;   // = 7 + 5,56 * 2,5
+
+// "struct" junta várias variáveis num pacote só. Fica mais fácil
+// gravar tudo de uma vez na EEPROM.
+struct Calibracao {
+  uint16_t marca;         // número "assinatura" para saber se já gravamos
+  float inclinacao;
+  float intercepto;
+  float tensao[3];        // tensão medida em cada tampão
+  bool  temPonto[3];      // quais tampões já foram gravados
+};
+
+const uint16_t MARCA_VALIDA = 0xA5C3;  // qualquer número serve, desde que fixo
+Calibracao cal;                         // a calibração em uso
+
+
+// ======================= ESTADO DO PROGRAMA =======================
+
+// "enum" dá nomes para números. Fica mais legível que usar 0, 1, 2...
+enum Modo { MODO_PH, MODO_MV, MODO_TEMP, MODO_CALIB };
+Modo modo = MODO_PH;
+uint8_t tampaoEscolhido = 1;  // começa no 6,86 (o do meio da lista)
+
+enum Botao { NENHUM, DIREITA, CIMA, BAIXO, ESQUERDA, SELECT };
+Botao botaoAnterior = NENHUM;
+
+float tensaoPH   = 0;  // última tensão lida da sonda
+float tensaoTemp = 0;  // última tensão lida do sensor de temperatura
+float ph         = 7;  // último pH calculado
+
+unsigned long ultimaLeitura = 0;
+unsigned long ultimoPisca   = 0;
+unsigned long inicioPulso   = 0;
+bool estadoPisca = false;
+
+
+// =====================================================================
+// LEITURAS
+// =====================================================================
+
+// Lê um pino analógico 20 vezes e devolve a média em volts.
+// A média reduz o "ruído" elétrico, que faz o valor ficar pulando.
+float lerTensao(uint8_t pino) {
+  long soma = 0;
+  for (uint8_t i = 0; i < 20; i++) soma += analogRead(pino);
+  return (soma / 20.0) * 5.0 / 1023.0;  // 0..1023 vira 0..5 V
+}
+
+float calcularPH(float tensao) {
+  return cal.inclinacao * tensao + cal.intercepto;
+}
+
+
+// =====================================================================
+// BOTÕES
+// =====================================================================
+// Os 5 botões estão ligados no MESMO pino (A0), cada um com um
+// resistor diferente. Assim, cada botão gera uma tensão diferente,
+// e o Arduino descobre qual foi apertado pelo valor lido.
+
+Botao lerBotao() {
+  int v = analogRead(PIN_BOTOES);
+  if (v < 60)  return DIREITA;
+  if (v < 200) return CIMA;
+  if (v < 400) return BAIXO;
+  if (v < 600) return ESQUERDA;
+  if (v < 800) return SELECT;
+  return NENHUM;  // ~1023 = nenhum botão apertado
+}
+
+// Devolve um botão só no momento em que ele é APERTADO.
+// Sem isso, segurar o botão faria a ação repetir centenas de vezes.
+Botao botaoApertado() {
+  Botao agora = lerBotao();
+  Botao resultado = NENHUM;
+  if (agora != NENHUM && botaoAnterior == NENHUM) {
+    delay(30);                       // espera o contato "assentar"
+    if (lerBotao() == agora) resultado = agora;
+  }
+  botaoAnterior = agora;
+  return resultado;
+}
+
+
+// =====================================================================
+// CALIBRAÇÃO
+// =====================================================================
+
+void calibracaoPadrao() {
+  cal.marca = MARCA_VALIDA;
+  cal.inclinacao = INCLINACAO_PADRAO;
+  cal.intercepto = INTERCEPTO_PADRAO;
+  for (uint8_t i = 0; i < 3; i++) {
+    cal.tensao[i] = 0;
+    cal.temPonto[i] = false;
+  }
+}
+
+// Recalcula a reta usando os tampões já gravados.
+// - 1 ponto: mantém a inclinação e só ajusta a altura da reta.
+// - 2 ou 3 pontos: calcula a reta que passa mais perto de todos
+//   (método dos "mínimos quadrados", visto em matemática/física).
+void recalcularReta() {
+  uint8_t n = 0;
+  float sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (uint8_t i = 0; i < 3; i++) {
+    if (!cal.temPonto[i]) continue;
+    float x = cal.tensao[i], y = TAMPOES[i];
+    n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  if (n == 0) return;
+  if (n == 1) {
+    cal.intercepto = sy - cal.inclinacao * sx;
+    return;
+  }
+  float denominador = n * sxx - sx * sx;
+  if (abs(denominador) < 1e-6) return;  // tensões iguais: não dá para calcular
+  cal.inclinacao = (n * sxy - sx * sy) / denominador;
+  cal.intercepto = (sy - cal.inclinacao * sx) / n;
+}
+
+uint8_t pontosGravados() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < 3; i++) if (cal.temPonto[i]) n++;
+  return n;
+}
+
+
+// =====================================================================
+// LEDs
+// =====================================================================
+
+void sequenciaBoot() {
+  const uint8_t leds[] = {LED_LIGADO, LED_LEITURA, LED_ALERTA, LED_CALIB};
+  for (uint8_t pino : leds) { digitalWrite(pino, HIGH); delay(200); }
+  delay(300);
+  for (uint8_t pino : leds) digitalWrite(pino, LOW);
+}
+
+// Usa millis() (um cronômetro interno) em vez de delay(),
+// para o Arduino não travar enquanto o LED pisca.
+void atualizarLeds(unsigned long agora) {
+  digitalWrite(LED_LIGADO, HIGH);
+  digitalWrite(LED_LEITURA, (agora - inicioPulso < PULSO_LEITURA) ? HIGH : LOW);
+  digitalWrite(LED_CALIB, modo == MODO_CALIB ? HIGH : LOW);
+
+  bool alerta = (modo != MODO_CALIB) && (ph < PH_MIN || ph > PH_MAX);
+  if (alerta) {
+    if (agora - ultimoPisca >= INTERVALO_PISCA) {
+      ultimoPisca = agora;
+      estadoPisca = !estadoPisca;
+    }
+  } else {
+    estadoPisca = false;
+  }
+  digitalWrite(LED_ALERTA, estadoPisca ? HIGH : LOW);
+}
+
+
+// =====================================================================
+// TELA
+// =====================================================================
+// O LCD tem 2 linhas de 16 caracteres. setCursor(coluna, linha)
+// começa em (0, 0) no canto de cima, à esquerda.
+// Escrevemos espaços no fim para apagar restos do texto anterior.
+
+void desenharTela() {
+  lcd.setCursor(0, 0);
+
+  if (modo == MODO_PH) {
+    lcd.print(F("pH: "));
+    lcd.print(ph, 2);
+    lcd.print(F("        "));
+    lcd.setCursor(0, 1);
+    if (ph < PH_MIN)      lcd.print(F("ACIDO - ALERTA! "));
+    else if (ph > PH_MAX) lcd.print(F("BASICO - ALERTA!"));
+    else                  lcd.print(F("Faixa normal    "));
+  }
+
+  else if (modo == MODO_MV) {
+    lcd.print(F("Sinal da sonda  "));
+    lcd.setCursor(0, 1);
+    lcd.print(tensaoPH * 1000, 0);  // volts -> milivolts
+    lcd.print(F(" mV          "));
+  }
+
+  else if (modo == MODO_TEMP) {
+    lcd.print(F("Temp (aprox.)   "));
+    lcd.setCursor(0, 1);
+    lcd.print(F("To: "));
+    lcd.print(tensaoTemp, 2);
+    lcd.print(F(" V        "));
+  }
+
+  else {  // MODO_CALIB
+    lcd.print(F("CAL tampao "));
+    lcd.print(TAMPOES[tampaoEscolhido], 2);
+    lcd.print(cal.temPonto[tampaoEscolhido] ? F("*") : F(" "));
+    lcd.setCursor(0, 1);
+    lcd.print(tensaoPH, 3);
+    lcd.print(F("V pts:"));
+    lcd.print(pontosGravados());
+    lcd.print(F("   "));
+  }
+}
+
+// Mostra uma mensagem rápida (ex.: "Gravado!") por 1 segundo.
+void aviso(const __FlashStringHelper* l1, const __FlashStringHelper* l2) {
+  lcd.clear();
+  lcd.print(l1);
+  lcd.setCursor(0, 1);
+  lcd.print(l2);
+  delay(1000);
+  lcd.clear();
+}
+
+
+// =====================================================================
+// AÇÕES DOS BOTÕES
+// =====================================================================
+
+void tratarBotao(Botao b) {
+  if (b == NENHUM) return;
+
+  if (modo != MODO_CALIB) {
+    // --- Modos de leitura ---
+    if (b == CIMA)  modo = (modo == MODO_TEMP) ? MODO_PH  : (Modo)(modo + 1);
+    if (b == BAIXO) modo = (modo == MODO_PH)   ? MODO_TEMP : (Modo)(modo - 1);
+    if (b == SELECT) {
+      modo = MODO_CALIB;
+      aviso(F("Modo calibracao"), F("Lave a sonda!"));
+    }
+  } else {
+    // --- Modo calibração ---
+    if (b == CIMA)  tampaoEscolhido = (tampaoEscolhido + 1) % 3;
+    if (b == BAIXO) tampaoEscolhido = (tampaoEscolhido + 2) % 3;
+    if (b == SELECT) {
+      cal.tensao[tampaoEscolhido] = tensaoPH;
+      cal.temPonto[tampaoEscolhido] = true;
+      recalcularReta();
+      EEPROM.put(0, cal);  // grava na memória permanente
+      aviso(F("Ponto gravado!"), F("Lave a sonda"));
+    }
+    if (b == DIREITA) {
+      calibracaoPadrao();
+      EEPROM.put(0, cal);
+      aviso(F("Calibracao"), F("apagada"));
+    }
+    if (b == ESQUERDA) {
+      modo = MODO_PH;
+      aviso(F("Saindo da"), F("calibracao"));
+    }
+  }
+  lcd.clear();
+  desenharTela();
+}
+
+
+// =====================================================================
+// SETUP: roda UMA vez ao ligar
+// =====================================================================
+void setup() {
+  pinMode(LED_LIGADO, OUTPUT);
+  pinMode(LED_LEITURA, OUTPUT);
+  pinMode(LED_ALERTA, OUTPUT);
+  pinMode(LED_CALIB, OUTPUT);
+
+  lcd.begin(16, 2);  // avisa que o LCD tem 16 colunas e 2 linhas
+  lcd.print(F("pHmetro Arduino"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("Iniciando..."));
+  sequenciaBoot();
+
+  // Busca a calibração guardada. Se a "assinatura" não bater,
+  // é a primeira vez que o código roda: usa os valores padrão.
+  EEPROM.get(0, cal);
+  if (cal.marca != MARCA_VALIDA) {
+    calibracaoPadrao();
+    EEPROM.put(0, cal);
+  }
+
+  lcd.clear();
+}
+
+
+// =====================================================================
+// LOOP: roda para SEMPRE
+// =====================================================================
+void loop() {
+  unsigned long agora = millis();
+
+  // 1. Botões: conferidos em toda volta, para responder rápido
+  tratarBotao(botaoApertado());
+
+  // 2. Leitura e tela: a cada 500 ms
+  if (agora - ultimaLeitura >= INTERVALO_LEITURA) {
+    ultimaLeitura = agora;
+    tensaoPH   = lerTensao(PIN_PH);
+    tensaoTemp = lerTensao(PIN_TEMP);
+    ph = calcularPH(tensaoPH);
+    inicioPulso = agora;  // dispara a piscada do amarelo
+    desenharTela();
+  }
+
+  // 3. LEDs: atualizados em toda volta (para o pisca ficar certinho)
+  atualizarLeds(agora);
+}

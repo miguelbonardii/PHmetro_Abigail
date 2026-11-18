@@ -1,0 +1,72 @@
+LIGAÇÕES DO pHMETRO - ONDE VAI CADA FIO
+=======================================
+
+IMPORTANTE: faça ou mude as ligações sempre com o Arduino desligado do USB.
+
+
+1. LCD KEYPAD SHIELD (encaixado em cima do Mega, sem fios)
+----------------------------------------------------------
+Pino do Mega   Função no shield
+8              RS do LCD
+9              E (Enable) do LCD
+4              D4 do LCD
+5              D5 do LCD
+6              D6 do LCD
+7              D7 do LCD
+A0             Os 5 botões (divisor de tensão)
+10             Luz de fundo: NÃO USAR NEM LIGAR NADA AQUI
+
+Valores do A0 para cada botão:
+Valor lido     Botão
+menor que 60   RIGHT
+menor que 200  UP
+menor que 400  DOWN
+menor que 600  LEFT
+menor que 800  SELECT
+800 ou mais    nenhum botão
+
+
+2. MÓDULO DE pH PH-4502C (com sonda de pH universal BNC, azul)
+--------------------------------------------------------------
+Pino do módulo   Vai para      Função
+Po               A8 do Mega    Sinal do pH
+V+               5V do Mega    Alimentação
+G                GND do Mega   Terra (se houver dois pinos G, ligue os dois)
+To               nada          Temperatura da placa, não usada neste projeto
+Do               nada          Saída digital, não usada neste projeto
+
+O fio To -> A9 não é mais usado. Ele pode ser retirado (com o USB desligado);
+se ficar ligado, não atrapalha, porque o código não lê mais o A9.
+
+A sonda de pH universal (azul) rosqueia no conector BNC (o conector redondo de
+metal) do módulo. Ela não tem sensor de temperatura.
+
+
+3. LEDS (cada um com seu próprio resistor de 220 ohm)
+-----------------------------------------------------
+Pino do Mega   Cor            Função
+22             Azul           Sistema ligado (aceso fixo)
+23             Amarelo        Pisca 80 ms a cada leitura; aceso fixo se estável
+26             Vermelho       Pisca a cada 250 ms com pH fora de 6,0 a 8,0
+27             Transparente   Aceso no modo calibração
+
+Caminho de cada LED:
+pino do Mega -> resistor de 220 ohm -> perna LONGA do LED (+)
+perna CURTA do LED (-) -> trilho de GND da protoboard
+
+O trilho de GND da protoboard precisa de um fio até um pino GND do Mega.
+
+
+4. ONDE ACHAR 5V E GND COM O SHIELD ENCAIXADO
+---------------------------------------------
+O shield cobre os pinos de alimentação da parte comum da placa. O Mega tem
+mais pinos na barra dupla da ponta:
+- 5V: ao lado dos pinos 22 e 23.
+- GND: ao lado dos pinos 52 e 53.
+O pino A8 fica fora da área coberta pelo shield.
+Confira os nomes impressos na sua placa antes de ligar.
+
+
+5. O QUE NÃO USAR
+-----------------
+Este projeto não usa Arduino Uno, comunicação I2C, display OLED nem buzzer.
