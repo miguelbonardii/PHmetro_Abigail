@@ -12,6 +12,7 @@ Os códigos em uso ficam em `pHmetro/`. A IDE do Arduino exige que cada `.ino` f
 - `pHmetro/teste_botoes/teste_botoes.ino`: mostra no LCD o valor do A0 e o nome do botão.
 - `pHmetro/EXPLICACAO.txt`: explicação de cada parte, em texto simples para iniciantes.
 - `pHmetro/LIGACOES.txt`: tabela de onde vai cada fio.
+- `pHmetro/planilha_phmetro.xlsx`: planilha com as abas Comparação (projeto x pHmetro comercial) e Calibração (mV de cada tampão), com gráfico, R² e resumo calculados sozinhos.
 - `antigo_nao_usar/`: cópia do primeiro código, guardada só como histórico. **Não use nem edite.**
 
 Se mudar o código, os pinos ou o funcionamento, atualize também `EXPLICACAO.txt` e `LIGACOES.txt`.
